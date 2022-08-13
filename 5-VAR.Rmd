@@ -1,0 +1,66 @@
+---
+title: "VAR Models"
+author: "Sarthak Saluja"
+output: html_document
+---
+
+Purpose : 
+1. Clean matched topic data for VAR models 
+2. Produce nice timeseries plots 
+3. Run and tune VAR models 
+4. Perform Granger Causality Test 
+5. Compute Impulsive Response Functions 
+
+Load libraries : 
+
+```{r}
+library(xts)
+library(vars)
+```
+
+Load data : 
+
+```{r}
+
+
+```
+
+Data Cleaning :
+
+```{r}
+all_topics <- list(police, transnational, media, opposition, jazzy, rihanna, msp, borders)
+
+all_topics <- lapply(all_topics, function(x){
+  x[is.na(x)] <- 0
+  x$document <- as.Date(x$document)
+  x <- x |> filter(document > as.Date('2020-09-10'))
+  x <- xts(x[, -1], order.by = x$document)
+  return(as.data.frame(x))
+})
+
+
+
+```
+
+Plot Time Series :
+
+```{r}
+
+lapply(all_topics, function(x){
+  
+  plot.ts(x[, c('gamma_core', 'gamma_periphery')])
+  
+})
+
+
+```
+
+
+
+
+
+
+
+
+
+
