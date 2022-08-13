@@ -1,0 +1,213 @@
+---
+title: "K-core Analysis"
+author: "Sarthak Saluja"
+output: html_document
+---
+
+Purpose : 
+
+1. Find out the coreness of the graph
+2. Explore structure of graph
+3. Create a network between the cores and periphery 
+
+Create workspace :
+
+```{r}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) 
+rm(list = ls())
+```
+
+Load in libraries : 
+
+```{r}
+library(igraph)
+library(casnet)
+library(ggplot2)
+
+```
+
+Load in data : 
+
+```{r}
+retweet_network <- readRDS('networks/retweet_network.rds')
+
+```
+
+1. Coreness of the graph 
+
+Find out the cores in retweet network : 
+
+```{r}
+
+extract_cores <- function(network){
+  cores <- coreness(network)
+  core_df <- data.frame(cores)
+  core_df$author_id <- rownames(core_df)
+  core_df <- core_df[c(2,1)]
+  rownames(core_df) <- NULL
+  return(core_df)
+}
+
+core_df <- extract_cores(retweet_network)
+
+```
+
+Number of users per core : 
+
+```{r}
+num_users <- data.frame(table(core_df$cores))
+colnames(num_users) <- c('core', 'users')
+
+users_per_core <- ggplot(num_users, 
+                         aes(x = factor(core), 
+                             y = users)) + 
+  geom_bar(stat = 'identity', 
+           width = 0.5, 
+           color = 'black') + 
+  coord_flip() + 
+  xlab('Core') + 
+  ylab('Number of users') + 
+  theme_bw()
+
+ggsave(filename = 'plots/K-core/users_by_core.png', users_per_core)
+```
+
+Merge with the edge df and create an edge list : 
+
+
+```{r}
+
+edges_core <- edges_retweets |> 
+  left_join(core_df, by = c('author_id' = 'author_id')) |> 
+  select(author_id, retweet_author_id, count, author_core = cores) |> 
+  left_join(core_df, by = c('retweet_author_id' = 'author_id')) |> 
+  select(author_id, retweet_author_id, count, author_core, retweet_author_core = cores) |> 
+  group_by(author_core, retweet_author_core) |> 
+  summarize(messages = sum(count))
+
+edges_core
+
+saveRDS(edges_core, 'edge_lists/edges_core.rds')
+```
+
+2. Explore the groups : 
+
+Which group receives the most re-tweets? 
+
+```{r}
+retweets_by_core <- edges_core |> 
+  group_by(retweet_author_core) |> 
+  summarise(retweets_received = sum(messages)) |> 
+  arrange(-retweets_received) |> 
+  ggplot(aes(x = factor(retweet_author_core), y = retweets_received)) + 
+  geom_bar(stat = 'identity', 
+           width = 0.5, 
+           color = 'black') + 
+  coord_flip() + 
+  xlab('Core') + 
+  ylab('Retweets Received') + 
+  theme_bw()
+
+ggsave(filename = 'plots/K-core/retweets_by_core.png', retweets_by_core)
+```
+
+Get core values in original tweets df : 
+
+```{r}
+tweets_core <- all_tweets |> 
+  left_join(core_df, by = 'author_id')
+
+num_messages <- tweets_core |>
+  filter(!is.na(cores)) |>
+  group_by(cores) |>
+  summarise(total_messages = n())
+
+tweets_by_core <- ggplot(num_messages, 
+       aes(x = factor(cores), y = total_messages)) + 
+  geom_bar(stat = 'identity', 
+           width = 0.5, 
+           color = 'black') + 
+  coord_flip() + 
+  xlab('Core') + 
+  ylab('Total number of Tweets posted') + 
+  theme_bw()
+
+ggsave(filename = 'plots/K-core/tweets_by_core.png', tweets_by_core)
+```
+
+3. Core-periphery Network 
+
+Create Network 
+
+```{r}
+core_network <- graph_from_data_frame(edges_core[, 1:2], directed = T)
+E(core_network)$weight <- edges_core$messages
+V(core_network)$messages <- num_messages$total_messages
+summary(core_network)
+
+saveRDS(core_network, 'networks/core_network.rds')
+```
+
+Plot Network 
+
+```{r}
+plot(simplify(core_network), 
+     vertex.size = unlist(V(core_network)$messages)*0.0002, 
+     edge.width = E(core_network)$weight*0.00007, 
+     edge.arrow.size = E(core_network)$weight*0.0002,
+     vertex.label.cex = 0.8,
+     layout = layout_as_spiral(core_network, 
+                               type = 'Archimedean', 
+                               rev = T, 
+                               a = 1.2))
+```
+
+Simulate removal of impact : 
+
+```{r}
+
+simulate_removal <- function(tweets, cores){
+  
+  
+}
+
+edge_list_sim <- support_tweets |> 
+  filter((!is.na(cores)) & cores != 6 & (!is.na(retweet_author_id))) |> 
+  group_by(author_id, retweet_author_id) |> 
+  summarize(messages = n())
+
+retweet_network_sim <- graph_from_data_frame(edge_list_sim[, c(1,2)], directed = T)
+E(retweet_network_sim)$weight <- edge_list_sim$messages
+
+core_sim_df <- create_core_edgelist(retweet_network_sim)
+
+```
+
+Assign core and periphery : 
+
+```{r}
+tweets_core$is_core <- ifelse(tweets_core$cores > 7, 1, 0)
+
+num_messages |> 
+  mutate(core = ifelse(cores > 7, 1, 0)) |> 
+  group_by(core) |> 
+  summarize(n = sum(total_messages)) # 0	482632			1	330451	
+
+saveRDS(tweets_core, 'tweets/network_tweets.rds')
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
