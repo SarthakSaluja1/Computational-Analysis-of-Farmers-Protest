@@ -20,6 +20,7 @@ library(quanteda.textstats)
 library(quanteda.textplots)
 library(purrr)
 library(tidyr)
+library(data.table)
 
 ## 1. Initial sample of tweets in support of protests ## 
 
@@ -191,8 +192,26 @@ saveRDS(all_tweets, 'tweets/all_tweets.rds')
 
 ## 4. Describe data ##
 
+
+# Random sample of 5 tweets for display 
+
+original_support_tweets <- support_tweets |> 
+  as_tibble() |>
+  filter(lengths(referenced_tweets) == 0) 
+
+nrow(original_support_tweets) # 35656
+
+ran <- sample(1:nrow(original_support_tweets), 5)
+
+display <- gsub('\n', ' ', original_support_tweets$text[ran])
+
+write.csv(display, 'csv/support_text.csv')
+
+                
 # Number of tweets 
 
+nrow(support_tweets) # 264771
+nrow(users_tweets) # 813551
 nrow(all_tweets) # 1078322 tweets in total 
 
 
@@ -200,9 +219,17 @@ nrow(all_tweets) # 1078322 tweets in total
 
 length(unique(all_tweets$author_id)) # 95157 unique users 
 
-# Find out referenced tweet IDs for tweets that have been retweeted 
+# Unique tweets 
 
-all_tweets <- all_tweets |> # Un-nest re-tweets
+distinct_all_tweets <- all_tweets |> 
+  distinct(id, .keep_all = T)
+
+nrow(distinct_all_tweets) # 1065112
+length(unique(all_tweets$author_id)) # 95157
+
+# Find out referenced tweet IDs for tweets that have been re-tweeted 
+  
+distinct_all_tweets <- distinct_all_tweets |> # Un-nest re-tweets
   as_tibble() |>
   filter(lengths(referenced_tweets) > 0) |>
   unnest(referenced_tweets, 
@@ -210,13 +237,15 @@ all_tweets <- all_tweets |> # Un-nest re-tweets
          keep_empty = T, 
          names_sep = '_')
 
-all_tweets <- all_tweets |> 
-  left_join(all_tweets[, c('referenced_tweets_id', 'id', 'text', 'author_id')], 
+distinct_all_tweets <- distinct_all_tweets |> 
+  left_join(distinct_all_tweets[, c('referenced_tweets_id', 'id', 'text', 'author_id')], 
             by = c('referenced_tweets_id' = 'id'))
 
-colnames(all_tweets)[colnames(all_tweets) == 'author_id.y'] = 'retweet_author_id'
-colnames(all_tweets)[colnames(all_tweets) == 'author_id.x'] = 'author_id'
-colnames(all_tweets)[colnames(all_tweets) == 'text.y'] = 'retweeted_text'
+colnames(distinct_all_tweets)[colnames(distinct_all_tweets) == 'author_id.y'] = 'retweet_author_id'
+colnames(distinct_all_tweets)[colnames(distinct_all_tweets) == 'author_id.x'] = 'author_id'
+colnames(distinct_all_tweets)[colnames(distinct_all_tweets) == 'text.y'] = 'retweeted_text'
+
+saveRDS(distinct_all_tweets, 'tweets/all_tweets.rds')
 
 # Unique tweets (excluding re-tweets)
 
