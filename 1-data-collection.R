@@ -76,9 +76,9 @@ collect_tweets_daily(total_limit = 2000000,
 
 # Create a function for binding the tweets 
 
-bind_data <- function(file = 'init_', 
+bind_data <- function(file = 'suppory_query/final_', 
                       start_date = '2020-09-01', 
-                      end_date = '2021-12-01', 
+                      end_date = '2021-09-30', 
                       by = 'month', 
                       users = F){
   
@@ -122,7 +122,7 @@ support_usernames <- bind_data(file = 'support_query/final_',
 
 # User IDs 
 
-unique_users <- unique(usernames$username)
+unique_users <- unique(support_usernames$username)
 
 # Randomly Sample 25% users 
 
@@ -172,9 +172,6 @@ lapply(1:length(users_split), function(x){
 
 users_tweets <- bind_tweets(data_path = 'users_tweets/')
 
-table(users_tweets$lang)
-users_tweets$created_at <- as.Date(users_tweets$created_at)
-range(users_tweets$created_at)
 
 # Bind all tweets together 
 
@@ -186,9 +183,6 @@ all_tweets <- bind_rows(support_tweets, users_tweets)
 saveRDS(support_tweets, 'tweets/support_tweets.rds')
 saveRDS(usernames, 'tweets/support_usernames.rds')
 saveRDS(users_tweets, 'tweets/users_tweets.rds')
-saveRDS(usernames, 'tweets/user_tweets_usernames.rds')
-saveRDS(all_tweets, 'tweets/all_tweets.rds')
-
 
 ## 4. Describe data ##
 
@@ -197,7 +191,7 @@ saveRDS(all_tweets, 'tweets/all_tweets.rds')
 
 original_support_tweets <- support_tweets |> 
   as_tibble() |>
-  filter(lengths(referenced_tweets) == 0) 
+  filter(lengths(referenced_tweets) == 0) # Remove retweets/quotes/repliies
 
 nrow(original_support_tweets) # 35656
 
@@ -247,11 +241,7 @@ colnames(distinct_all_tweets)[colnames(distinct_all_tweets) == 'text.y'] = 'retw
 
 saveRDS(distinct_all_tweets, 'tweets/all_tweets.rds')
 
-# Unique tweets (excluding re-tweets)
 
-all_tweets |> 
-  filter(referenced_tweets_type != 'retweeted') |> 
-  summarize(n = n()) # 79718 non re-tweets
 
 
 
