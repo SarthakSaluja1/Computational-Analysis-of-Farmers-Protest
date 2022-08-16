@@ -29,6 +29,8 @@ library(tidytext)
 library(ggthemes)
 library(furrr)
 library(purrr)
+library(ldatuning)
+library(topicdoc)
 #plan(multicore)
 ```
 
@@ -38,47 +40,42 @@ Load in the data
 network_tweets <- readRDS('tweets/network_tweets.rds')
 coredfm <- readRDS('dfm/coredfm.rds')
 peripherydfm <- readRDS('dfm/peripherydfm.rds')
+
+K_core_results <- readRDS('topic models/K_core_results.rds')
+K_periphery_results <- readRDS('topic models/K_periphery_results.rds')
+
 ```
 
 Preprocessing :
 
 ```{r}
+# Get all retweets and only keep the distinct ones whose authors are assigned to a core
+
+retweets <- network_tweets |>
+  filter(!is.na(retweeted_text) & !is.na(cores)) |> 
+  distinct(referenced_tweets_id.y, .keep_all = T)
+
+# Non retweets
+
 unique_tweets <- network_tweets |> 
   filter(referenced_tweets_type != 'retweeted')
 
-unique_tweets$created_at <- as.Date(unique_tweets$created_at)
+corpus <- bind_rows(original_tweets, retweets) # bind them together
 
-range(unique_tweets$created_at)
-```
+# remove all hashtags 
 
-Make dfm : 
-
-```{r}
-# remove common occurring hashtags 
-
-hashtags <- stringr::str_extract_all(unique_tweets$text.x, "#\\w+")
+hashtags <- stringr::str_extract_all(corpus$text.x, "#\\w+")
 hashtags <- unlist(hashtags)
 hashtags_to_remove <- unique(hashtags)
 
 hashtags_to_remove
-
-# popular hashtags 
-
-top_20_hashtags <- hashtags |> 
-  group_by(tag) |> 
-  summarize(n = n()) |> 
-  arrange(-n) |> 
-  head(20) |> 
-  select(tag) |>
-  unlist()
-  
-
 ```
+
 
 ```{r}
 keywords <- c('farmers', 'protest')
 
-make_dfm <- function(tweets = support_tweets, 
+make_dfm <- function(tweets = corpus, 
                      core = 1){
   
   dfm <- tweets |> 
@@ -93,15 +90,17 @@ make_dfm <- function(tweets = support_tweets,
     tokens_remove(c(stopwords('en'), 
                     hashtags_to_remove, 
                     keywords)) |> 
+    tokens_ngrams(1:2) |>
     dfm() |>
     dfm_group(groups = created_at) |>
-    dfm_trim(min_termfreq = 20)
+    dfm_trim(min_termfreq = 20, 
+             max_termfreq = 1000)
   
   return(dfm)
 }
 
-coredfm <- make_dfm(unique_tweets, core = 1)
-peripherydfm <- make_dfm(unique_tweets, core = 0)
+coredfm <- make_dfm(corpus, core = 1)
+peripherydfm <- make_dfm(corpus, core = 0)
 
 saveRDS(coredfm, 'dfm/coredfm.rds')
 saveRDS(peripherydfm, 'dfm/peripherydfm.rds')
@@ -110,50 +109,106 @@ coredfm
 peripherydfm
 ```
 
+Evaluate and chose : 
 
 ```{r}
-core_input <- convert(coredfm, to = 'tm')
-periphery_input <- convert(peripherydfm, to = 'tm')
+options(scipen = 99)
 
-K_core_results <- FindTopicsNumber(
-  core_input,
-  topics = seq(from = 5, to = 50, by = 10),
-  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
-  method = "Gibbs",
-  control = list(seed = 124),
-  verbose = TRUE, 
-  mc.cores = 3L
-)
+# Evaluate topic models
 
-K_periphery_results <- FindTopicsNumber(
-  core_input,
-  topics = seq(from = 5, to = 50, by = 10),
-  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
-  method = "Gibbs",
-  control = list(seed = 123),
-  verbose = TRUE, 
-  mc.cores = 3L
-)
+tm_input <- convert(dfm, to = 'tm')
 
-FindTopicsNumber_plot(K_core_results)
-FindTopicsNumber_plot(K_periphery_results)
+K = c(30, 40, 50, 60, 70, 80, 90, 100)
+
+# Log likelihood and exclusivity metric
+
+metrics <- lapply(1:length(K), function(x){
+  
+  K = K[x]
+  print(K)
+  
+  tm_core <- LDA(core_input, 
+            K, 
+            method="Gibbs", 
+            control=list(iter = 50, seed = 21))
+  
+  tm_periphery <- LDA(periphery_input, 
+                 K, 
+                 method="Gibbs", 
+                 control=list(iter = 50, seed = 11))
+  
+  
+  log_likelihood_core <- as.numeric(logLik(tm_core))
+  log_likelihood_periphery <- as.numeric(logLik(tm_periphery))
+  
+  exclusivity_core <- mean(topic_exclusivity(tm_core))
+  exclusivity_periphery <- mean(topic_exclusivity(tm_periphery))
+  
+  return(list(log_likelihood_core, log_likelihood_periphery, 
+              exclusivity_core, exclusivity_periphery))
+})
 
 
-saveRDS(K_core_results, 'topic models/K_core_results.rds')
-saveRDS(K_periphery_results, 'topic models/K_periphery_results.rds')
+metrics <- data.frame(K, do.call(rbind, metrics))
+metrics <- unnest(metrics)
+colnames(metrics) <- c('K', 'LL_Core', 'LL_Periphery', 'exclusivity_Core', 'exclusivity_Periphery')
+
+saveRDS(metrics, 'topic models/evaluation_results.rds')
+
+```
+
+Show metrics : 
+
+```{r}
+ptm_chose <- metrics |> 
+  pivot_longer(cols = -K, 
+               names_to = c('metric', '.values'),
+               names_sep = '_') |>
+  filter(.values == 'Periphery') |>
+  ggplot() + 
+  geom_line(aes(x = K, y = value), 
+            color = '#46A6C3') + 
+  geom_point(aes(x = K, y = value), 
+            color = '#46A6C3') +
+  facet_wrap(~metric, 
+             scales = 'free') + 
+  theme_bw() + 
+  labs(title = 'Evaluation metrics : Periphery')
+
+ctm_chose <- metrics |> 
+  pivot_longer(cols = -K, 
+               names_to = c('metric', '.values'),
+               names_sep = '_') |>
+  filter(.values == 'Core') |>
+  ggplot() + 
+  geom_line(aes(x = K, y = value), 
+            color = '#1E4E5C') + 
+  geom_point(aes(x = K, y = value), 
+            color = '#1E4E5C') +
+  facet_wrap(~metric, 
+             scales = 'free') + 
+  theme_bw() + 
+  labs(title = 'EValuation metrics : Core')
+
+ptm_chose
+ctm_chose
+
+ggsave('plots/topic models/chose_core.png', ctm_chose)
+ggsave('plots/topic models/chose_periphery.png', ptm_chose)
+
 ```
 
 
 ```{r}
-ctm <- LDA(coredfm, 
-           25, 
+ctm <- LDA(core_input, 
+           100, 
            method="Gibbs", 
-           control=list(iter = 50, seed = 1))
+           control=list(iter = 500, seed = 1))
 
-ptm <- LDA(peripherydfm, 
-           25, 
+ptm <- LDA(periphery_input, 
+           100, 
            method="Gibbs", 
-           control=list(iter = 50, seed = 11))
+           control=list(iter = 500, seed = 11))
 
 ```
 
@@ -165,12 +220,13 @@ core_terms <- data.frame(t(data.frame(terms(ctm, 20))))
 periphery_terms <- data.frame(t(data.frame(terms(ptm, 20))))
 
 
-core_labels <- data.frame(topics = 1:25, 
+core_labels <- data.frame(topics = 1:100, 
            terms = do.call(paste, c(core_terms, sep=", ")))
 
 
-periphery_labels <- data.frame(topics = 1:25, 
+periphery_labels <- data.frame(topics = 1:100, 
            terms = do.call(paste, c(periphery_terms, sep=", ")))
+
 
 write.csv(core_labels, 'topic models/core_labels.csv', 
           row.names = F)
@@ -179,7 +235,7 @@ write.csv(periphery_labels, 'topic models/periphery_labels.csv',
           row.names = F)
 ```
 
-Gamma values : 
+Beta/Gamma values : 
 
 ```{r}
 gamma_core <- tidy(ctm, 
@@ -213,7 +269,7 @@ select_topic <- function(topic_core,
   
   topic <- core |> 
     full_join(periphery, by = 'document') |> 
-    select(document, gamma_core = gamma.x, gamma_periphery = gamma.y)
+    select(document, gamma_core = gamma.x, gamma_periphery = gamma.y, name = name.x)
   
   
   if(save == T){
@@ -225,157 +281,45 @@ select_topic <- function(topic_core,
 }
 
 
-police <- select_topic(topic_core = 2, 
-                       topic_periphery = 24, 
-                       topic_name = 'police', 
+suppress <- select_topic(topic_core = 44, 
+                       topic_periphery = 34, 
+                       topic_name = 'suppress', 
                        save = T)
 
-transnational <- select_topic(topic_core = 5, 
-                       topic_periphery = 11, 
-                       topic_name = 'transnational', 
+
+singhu <- select_topic(topic_core = 45, 
+                       topic_periphery = 18, 
+                       topic_name = 'singhu', 
                        save = T)
 
-media <- select_topic(topic_core = 6, 
-                       topic_periphery = 20, 
-                       topic_name = 'media', 
-                       save = T)
-
-opposition <- select_topic(topic_core = 11, 
-                       topic_periphery = 13, 
-                       topic_name = 'opposition', 
-                       save = T)
-
-jazzy <- select_topic(topic_core = 12, 
-                       topic_periphery = 5, 
-                       topic_name = 'jazzy', 
-                       save = T)
-
-rihanna <- select_topic(topic_core = 18, 
-                       topic_periphery = 6, 
+rihanna <- select_topic(topic_core = 58, 
+                       topic_periphery = 25, 
                        topic_name = 'rihanna', 
                        save = T)
 
-msp <- select_topic(topic_core = 17, 
-                       topic_periphery = 14, 
-                       topic_name = 'msp', 
+republic_day <- select_topic(topic_core = 68, 
+                       topic_periphery = 91, 
+                       topic_name = 'republic day', 
                        save = T)
 
-borders <- select_topic(topic_core = 22, 
-                       topic_periphery = 23, 
-                       topic_name = 'border', 
+crony <- select_topic(topic_core = 71, 
+                       topic_periphery = 31, 
+                       topic_name = 'crony capitalism', 
                        save = T)
 
+media <- select_topic(topic_core = 81, 
+                       topic_periphery = 21, 
+                       topic_name = 'media hypocracy', 
+                       save = T)
 
-
-```
-
-
-
-
-
-
-
-
-
-
-
-Find optimal value for K : 
-
-```{r}
-
-find_K <- function(twdfm){
-  
-  stm_input <- convert(twdfm, to = "stm") # Create an stm object
-
-  # Check values for topics = 5, 10, 15, 20, 25
-
-  models <- data_frame(K = c(5, 10, 15, 20, 25)) %>%
-          mutate(topic_model = future_map(K, ~stm(stm_input$documents, K = .,
-                                                  verbose = FALSE, 
-                                                  vocab = stm_input$vocab, 
-                                                  data = stm_input$meta, 
-                                                  seed = TRUE, 
-                                                  init.type = "Spectral"))) # Parallel topic extraction
-
-  heldout <- make.heldout(stm_input$documents, stm_input$vocab)
-  
-  k_result <- models %>% 
-    mutate(exclusivity = map(topic_model, exclusivity), 
-           coherence = map(topic_model, semanticCoherence, stm_input$documents), 
-           heldout = map(topic_model, eval.heldout, heldout$missing))
-  
-  return(k_result)
-    
-}
-
-
-K_core <- find_K(coredfm)
-K_periphery <- find_K(peripherydfm)
+covid <- select_topic(topic_core = 96, 
+                       topic_periphery = 77, 
+                       topic_name = 'covid', 
+                       save = T)
 
 ```
 
-Plot fit : 
 
-```{r}
-plot_K_all_metrics <- function(group){
-  
-  if(group == 'core'){
-    result <- K_core
-  } else if (group == 'periphery'){
-    result <- K_periphery
-  }
-  
-  all_metrics <- result %>% 
-    transmute(K, 
-              'Coherence' = map_dbl(coherence, mean), 
-              'Held Out Likelihood' = map_dbl(heldout, 'expected.heldout'), 
-              'Exclusivity' = map_dbl(exclusivity, mean)) %>% 
-    pivot_longer(cols = c('Coherence', "Held Out Likelihood", 'Exclusivity'), 
-                 names_to = 'Metric', values_to = 'Values') %>% 
-    ggplot(aes(x = K, y = Values, color = Metric)) + 
-    geom_line() + 
-    facet_wrap(~Metric, scales = 'free_y') + 
-    theme_bw() + 
-    ggtitle(paste0('Main Metrics vs K for group : ', group)) 
-  
-  return(all_metrics)
-}
-
-plot_K_tradeoff <- function(group){
-  
-  if(group == 'core'){
-    result <- K_core
-  } else if (group == 'periphery'){
-    result <- K_periphery
-  }
-  
-  tradeoff <- result %>%
-    select(K, exclusivity, coherence) %>%
-    filter(K %in% c(5, 10, 15, 20, 25)) %>% 
-    unnest() %>% 
-    mutate(K = as.factor(K)) %>% 
-    ggplot(aes(x = coherence, y = exclusivity, color = K)) + 
-    geom_point() + 
-    geom_smooth(method = 'lm', se = FALSE) +
-    facet_wrap(~K) +
-    theme_bw() + 
-    ggtitle(paste0('Exclusivity vs Coherence for group : '), group)
-  
-  return(tradeoff)
-}
-
-plot_K_all_metrics('core')
-plot
-
-```
-
-```{r}
-library('ldatuning')
-?FindTopicsNumber
-
-
-
-```
 
 
 
