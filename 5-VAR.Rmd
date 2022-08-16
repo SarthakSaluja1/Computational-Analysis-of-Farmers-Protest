@@ -13,52 +13,243 @@ Purpose :
 
 Load libraries : 
 
-```{r}
+```{r, message = F}
 library(xts)
 library(vars)
+library(bruceR)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
 ```
 
 Load data : 
 
 ```{r}
+rm(list = ls())
 
-
+suppress <- read.csv('topics/suppress.csv')
+singhu <- read.csv('topics/singhu.csv')
+rihanna <- read.csv('topics/rihanna.csv')
+republic_day <- read.csv('topics/republic day.csv')
+crony <- read.csv('topics/crony capitalism.csv')
+media <- read.csv('topics/media hypocracy.csv')
+covid <- read.csv('topics/covid.csv')
 ```
 
 Data Cleaning :
 
 ```{r}
-all_topics <- list(police, transnational, media, opposition, jazzy, rihanna, msp, borders)
+all_topics <- list(suppress, singhu, rihanna, republic_day, crony, media, covid)
 
-all_topics <- lapply(all_topics, function(x){
-  x[is.na(x)] <- 0
-  x$document <- as.Date(x$document)
-  x <- x |> filter(document > as.Date('2020-09-10'))
-  x <- xts(x[, -1], order.by = x$document)
-  return(as.data.frame(x))
+  
+all_topics_cleaned <- lapply(all_topics, function(x){
+  
+  x <- x |>
+    filter(!is.na(gamma_core) & !is.na(gamma_periphery) & 
+             gamma_core != 0 & gamma_periphery != 0) |>
+    mutate(document = as.Date(document)) |> 
+    filter(document > as.Date('2020-11-01')) |> # Filter values due to missing data 
+    mutate(log_gamma_core = log(gamma_core), 
+           log_gamma_periphery = log(gamma_periphery)) # Log to account for skewness 
+  
+  x <- xts(x[, 6:7], order.by = x$document) # Create time series object
+  return(x)
 })
-
-
 
 ```
 
 Plot Time Series :
 
-```{r}
+```{r, out.width=5, out.height=8}
 
-lapply(all_topics, function(x){
+title <- c('Suppress Dissent', 
+            'Singhu Border', 
+            'Rihanna', 
+            'Republic Day', 
+            'Crony Capitalism', 
+            'Media', 
+            'Covid')
+
+RD = F
+Rihanna = F
+legend <- c('Periphery' = '#46A6C3', 'Core' = '#1E4E5C')
+
+lapply(1:length(all_topics_cleaned), function(x){
   
-  plot.ts(x[, c('gamma_core', 'gamma_periphery')])
+  df <- all_topics_cleaned[[x]]
+  name <- title[[x]]
   
+  if(name == 'Republic Day'){
+    RD = T
+  }
+  
+  if(name == 'Rihanna'){
+    Rihanna = T
+  }
+  
+  p <- df |>
+    as.data.frame() |> 
+    rownames_to_column('document') |>
+    mutate(document = as.Date(document)) |>
+    ggplot() + 
+    geom_line(aes(x = document, y = log_gamma_periphery, color = 'Periphery')) +
+    geom_line(aes(x = document, y = log_gamma_core, color = 'Core')) + 
+    {if(RD) list(
+    geom_vline(aes(xintercept = as.Date('2021-01-26')), 
+                   colour = 'red',
+                   linetype = 'dashed', 
+                   alpha = 0.5),
+    geom_segment(aes(x = as.Date('2021-02-15'), 
+                     y = -10, 
+                     xend = as.Date('2021-01-30'), 
+                     yend = -10),
+                 arrow = arrow(length = unit(0.2, "cm")),
+                 colour = 'red'),
+    annotate('text', 
+             x = as.Date('2021-03-20'), 
+             y = -10, 
+             label = 'Republic Day', 
+             colour = 'red'))} +
+    {if(Rihanna) list(
+    geom_vline(aes(xintercept = as.Date('2021-02-02')), 
+                   colour = 'red',
+                   linetype = 'dashed', 
+                   alpha = 0.5),
+    geom_segment(aes(x = as.Date('2021-02-20'), 
+                     y = -9.7, 
+                     xend = as.Date('2021-02-06'), 
+                     yend = -9.7),
+                 arrow = arrow(length = unit(0.2, "cm")),
+                 colour = 'red'),
+    annotate('text', 
+             x = as.Date('2021-04-01'), 
+             y = -9.7, 
+             label = "Rihanna's Tweet", 
+             colour = 'red'))} +
+    labs(title = paste0('Topic : ', name), 
+         x = 'date', 
+         y = 'log transformed topic prevelance', 
+         color = 'Legend') + 
+    scale_color_manual(values = legend) +
+    theme_bw() + 
+    scale_x_date(date_labels = "%b-%Y", 
+                 date_breaks = '1 month') + 
+    theme(axis.text.x = element_text(size = 10, angle = 90))
+  
+  ggsave(paste0('plots/Time series/', name, '.png'), p)
+  
+  return(p)
 })
-
-
 ```
 
 
+```{r}
+options(scipen = 99)
+
+# Evaluate metrics 
+
+VAR_eval <- lapply(1 : length(all_topics_cleaned), function(x){
+  
+  df <- all_topics_cleaned[[x]]
+  name <- title[[x]]
+  
+  df <- data.frame(VARselect(df, 
+                             lag.max = 7, 
+                             type = 'const')$selection)
+  
+  return(df)
+})
+
+VAR_eval <- do.call(cbind, VAR_eval)
+colnames(VAR_eval) <- title
+
+VAR_eval <- VAR_eval |> 
+  rownames_to_column('metric')
+
+# Find the optimal lags 
+
+VAR_eval_optimal <- VAR_eval |>
+  filter(metric == 'AIC(n)')
+
+VAR_eval_optimal
+
+# Fit models 
+
+models <- lapply(1 : length(all_topics_cleaned), function(x){
+  
+  df <- all_topics_cleaned[[x]]
+  col <- x + 1
+  lag <- VAR_eval_optimal[, col]
+  
+  fit = VAR(df, 
+           p = lag,
+           type = 'both')
+
+  return(fit)
+})
+
+# Apply Granger Causality 
+
+lapply(models, granger_causality)
+
+# Plot irf
+
+lapply(models, function(x){ 
+       
+       irfc2p <- irf(x, 
+           impulse = "log_gamma_core", 
+           response = "log_gamma_periphery",
+           n.ahead = 15, 
+           ortho = FALSE, 
+           runs = 100)
+       
+       return(plot(irfc2p))
+})
+
+
+x <- models[[1]]
+x$datamat
+
+
+irf(x$datamat, 
+    impulse = "log_gamma_core", 
+    response = "log_gamma_periphery",
+    n.ahead = 10, 
+    ortho = FALSE, 
+    runs = 100)
+```
+
+
+```{r}
+# Republic day
+
+VARselect(all_topics_cleaned[[7]], lag.max=5,
+  type="const")[["selection"]]
+
+fitvar = VAR(all_topics_cleaned[[7]], 
+             p=2, 
+             type="both")
+
+causality <- granger_causality(fitvar)
+
+irfc2p <- irf(fitvar, 
+           impulse = "gamma_core", 
+           response = "gamma_periphery",
+           n.ahead = 8, ortho = FALSE, 
+           runs = 100)
+
+irfp2c <- irf(fitvar, 
+           impulse = "gamma_periphery", 
+           response = "gamma_core",
+           n.ahead = 8, ortho = FALSE, 
+           runs = 100)
+
+plot(irfc2p)
+plot(irfp2c)
 
 
 
+```
 
 
 
