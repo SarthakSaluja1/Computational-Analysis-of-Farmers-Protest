@@ -160,6 +160,8 @@ saveRDS(metrics, 'topic models/evaluation_results.rds')
 Show metrics : 
 
 ```{r}
+metrics <- readRDS('topic models/evaluation_results.rds')
+
 ptm_chose <- metrics |> 
   pivot_longer(cols = -K, 
                names_to = c('metric', '.values'),
@@ -188,13 +190,20 @@ ctm_chose <- metrics |>
   facet_wrap(~metric, 
              scales = 'free') + 
   theme_bw() + 
-  labs(title = 'EValuation metrics : Core')
+  labs(title = 'Evaluation metrics : Core')
 
 ptm_chose
 ctm_chose
 
-ggsave('plots/topic models/chose_core.png', ctm_chose)
-ggsave('plots/topic models/chose_periphery.png', ptm_chose)
+ggsave('plots/topic models/chose_core.png', 
+       ctm_chose, 
+       width = 10,
+       height = 3)
+
+ggsave('plots/topic models/chose_periphery.png', 
+       ptm_chose, 
+       width = 10, 
+       height = 3)
 
 ```
 
