@@ -22,6 +22,10 @@ library(dplyr)
 library(tidyverse)
 library(stringr)
 library(tidyr)
+library(tseries)
+
+library(devtools)
+source_url("https://raw.githubusercontent.com/anguyen1210/var-tools/master/R/extract_varirf.R")
 ```
 
 Load data : 
@@ -51,8 +55,8 @@ all_topics_cleaned <- lapply(all_topics, function(x){
              gamma_core != 0 & gamma_periphery != 0) |>
     mutate(document = as.Date(document)) |> 
     filter(document > as.Date('2020-11-01')) |> # Filter values due to missing data 
-    mutate(log_gamma_core = log(gamma_core), 
-           log_gamma_periphery = log(gamma_periphery)) # Log to account for skewness 
+    mutate(log_gamma_core = log(gamma_core)/(1-log(gamma_core)), 
+           log_gamma_periphery = log(gamma_periphery)/(1-log(gamma_periphery))) # Log to account for skewness 
   
   x <- xts(x[, 6:7], order.by = x$document) # Create time series object
   return(x)
@@ -60,7 +64,15 @@ all_topics_cleaned <- lapply(all_topics, function(x){
 
 ```
 
+Check for Stationarity : 
 
+```{r}
+lapply(all_topics_cleaned, function(x){
+  print(adf.test(x$log_gamma_core))
+  print(adf.test(x$log_gamma_periphery))
+})
+
+```
 
 Plot Time Series :
 
@@ -160,7 +172,7 @@ VAR_eval <- lapply(1 : length(all_topics_cleaned), function(x){
   name <- title[[x]]
   
   df <- data.frame(VARselect(df, 
-                             lag.max = 7, 
+                             lag.max = 15, 
                              type = 'const')$selection)
   
   return(df)
@@ -190,12 +202,6 @@ write.csv(VAR_eval_optimal,
 ```
 
 ```{r}
-lapply(1 : length(all_topics_cleaned), function(x){ 
-  df <- all_topics_cleaned[[x]]
-  return(head(df))
-  })
-
-VAR_eval_optimal$AIC[1]
 
 # Fit models 
 
@@ -234,40 +240,82 @@ covid.VAR <- VAR(all_topics_cleaned[[7]],
 VAR <- list(suppress.VAR, singhu.VAR, rihanna.VAR, republic.VAR, crony.VAR, media.VAR, covid.VAR)
 
 irfc2p <- 
-  lapply(VAR, irf, 
+  lapply(VAR, 
+         irf, 
          impulse = 'log_gamma_core', 
          response = 'log_gamma_periphery', 
          n.ahead = 15, 
          ortho = F, 
-         runs = 100)
+         runs = 100, 
+         seed = 1234)
 
 irfp2c <- 
-  lapply(VAR, irf, 
+  lapply(VAR, 
+         irf, 
          impulse = 'log_gamma_periphery', 
          response = 'log_gamma_core', 
          n.ahead = 15, 
          ortho = F, 
-         runs = 100)
+         runs = 100, 
+         seed = 12345)
 
+cirfc2p <- lapply(VAR, 
+         irf, 
+         impulse = 'log_gamma_core', 
+         response = 'log_gamma_periphery', 
+         n.ahead = 15, 
+         ortho = F, 
+         runs = 100, 
+         seed = 1, 
+         cumulative = T)
+
+cirfp2c <- 
+  lapply(VAR, 
+         irf, 
+         impulse = 'log_gamma_periphery', 
+         response = 'log_gamma_core', 
+         n.ahead = 15, 
+         ortho = F, 
+         runs = 100, 
+         seed = 11, 
+         cumulative = T)
 ```
 
 ```{r}
-create_irf <- function(start = 'core'){
+plot(cirfc2p[[1]])
+```
+
+```{r}
+create_irf <- function(start = 'core', 
+                       cumulative = F){
   
-  if (start == 'core'){
+  if (start == 'core' & cumulative != T){
     
     irf <- irfc2p
     main = 'Impulsive Response from Core'
-    y = 'log gamma periphery'
+    y = 'logit gamma periphery'
     filename = '_core_to_periphery'
     
-  } else if (start == 'periphery'){
+  } else if (start == 'core' & cumulative == T){
+    
+    irf <- cirfc2p
+    main = 'Cumulative Impulsive Response from Core'
+    y = 'logit gamma periphery'
+    filename = '_cumulative_core_to_periphery'
+    
+  } else if (start == 'periphery' & cumulative != T){
     
     irf <- irfp2c
     main = 'Impulsive Response from Periphery'
     filename = '_periphery_to_core'
-    y = 'log gamma core'
+    y = 'logit gamma core'
     
+  } else if (start == 'periphery' & cumulative == T){
+    
+    irf <- cirfp2c
+    main = 'Cumulative Impulsive Response from Periphery'
+    filename = '_cumulative_periphery_to_core'
+    y = 'logit gamma core'
   }
   
   asdf <- lapply(1:length(irf), function(x){
@@ -301,10 +349,13 @@ create_irf <- function(start = 'core'){
   geom_line(aes(linetype = type, 
                 color = type)) + 
   facet_wrap(~topic, ncol = 4) +
+    {if(cumulative == F)scale_y_continuous(breaks = c(-0.25, 0, 0.25, 0.5), 
+                     limits = c(-0.25, 0.5))} +
+        {if(cumulative == T)scale_y_continuous(breaks = c(-0.5, 0, 0.5, 1, 1.5, 2), 
+                     limits = c(-0.5, 2))} +
   scale_linetype_manual(values = c('dashed', 'solid', 'dashed')) + 
   scale_color_manual(values = c('#46A6C3', '#1E4E5C', '#46A6C3')) +
   geom_hline(aes(yintercept = 0)) + 
-  scale_y_continuous(expand = c(0, 0)) +
   theme_bw() + 
   ylab(y) +
   labs(title = main, 
@@ -320,112 +371,39 @@ create_irf <- function(start = 'core'){
 
 }
 
-create_irf(start = 'periphery')
+create_irf(start = 'core', 
+           cumulative = T)
 
-create_irf()
+create_irf(start = 'core', 
+           cumulative = F)
+
+create_irf(start = 'periphery', 
+           cumulative = T)
+
+create_irf(start = 'periphery', 
+           cumulative = F)
 
 
 ```
 
+
+
 ```{r}
-library(devtools)
-source_url("https://raw.githubusercontent.com/anguyen1210/var-tools/master/R/extract_varirf.R")
 
-length(irfc2p)
-
-c2p <- lapply(1:length(irfc2p), function(x){
+lapply(1 : length(VAR), function(x){
+  var <- VAR[[x]]
+  name <- title[x]
   
-  irf <- irfc2p[[x]]
-  df <- extract_varirf(irf)
-  title <- title[[x]]
-  
-  df <- df |> 
-    select(-period)
-  colnames(df) <- c(paste0('main_', title), 
-                    paste0('lower_', title), 
-                    paste0('upper_', title))
-  return(df)
-  
+  granger_causality(var, 
+       file = paste0('causality/', name, '.doc'))
 })
-
-c2pdf <- do.call(cbind, c2p)
-c2pdf$day <- 0:15
-
-c2pdf <- c2pdf |> 
-  pivot_longer(!day, 
-               names_to = c('type', 'topic'), 
-               names_sep = '_', 
-               values_to = 'values')
-
-c2pdf |> 
-  ggplot(aes(x = day, 
-                y = values, 
-                group = type)) +
-  geom_line(aes(linetype = type, 
-                color = type)) + 
-  facet_wrap(~topic, ncol = 4) +
-  scale_linetype_manual(values = c('dashed', 'solid', 'dashed')) + 
-  scale_color_manual(values = c('#46A6C3', '#1E4E5C', '#46A6C3')) +
-  geom_hline(aes(yintercept = 0)) + 
-  scale_y_continuous(expand = c(0, 0)) +
-  theme_bw() + 
-  labs(title = 'Impulse Response from Core')
-
+       
 ```
 
 ```{r}
-plot(irfc2p[[2]])
-```
-
-
-```{r}
-df <- all_topics_cleaned[[1]]
-
-tr = VAR(df, 
-          p = 5,
-          type = 'both')
-
-irf(tr, 
-    impulse = "log_gamma_core", 
-    response = "log_gamma_periphery",
-    n.ahead = 10, 
-    ortho = FALSE, 
-    runs = 100)
-```
-
-
-```{r}
-# Republic day
-
-VARselect(all_topics_cleaned[[7]], lag.max=5,
-  type="const")[["selection"]]
-
-fitvar = VAR(all_topics_cleaned[[7]], 
-             p=2, 
-             type="both")
-
-causality <- granger_causality(fitvar)
-
-irfc2p <- irf(fitvar, 
-           impulse = "gamma_core", 
-           response = "gamma_periphery",
-           n.ahead = 8, ortho = FALSE, 
-           runs = 100)
-
-irfp2c <- irf(fitvar, 
-           impulse = "gamma_periphery", 
-           response = "gamma_core",
-           n.ahead = 8, ortho = FALSE, 
-           runs = 100)
-
-plot(irfc2p)
-plot(irfp2c)
-
-
+VAR_eval_optimal
 
 ```
-
-
 
 
 
