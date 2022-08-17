@@ -25,6 +25,7 @@ library(casnet)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
+library(hrbrthemes)
 ```
 
 Load in data : 
@@ -355,18 +356,29 @@ num_messages |>
 saveRDS(tweets_core, 'tweets/network_tweets.rds')
 ```
 
+Heatmap of retweets between shells : 
 
+```{r}
+retweets_hm <- edges_core |>
+  ungroup() |>
+  mutate(retweet_prop = messages/sum(messages)) |>
+  ggplot() + 
+  geom_tile(aes(x = author_core, 
+                 y = retweet_author_core, 
+                 fill = retweet_prop)) + 
+  scale_fill_gradient(low = '#397F75', 
+                      high = 'black') +
+  scale_y_continuous(expand = c(0,0), 
+                     breaks = 1:13) +
+  scale_x_continuous(expand = c(0,0), 
+                     breaks = 1:13) +
+  xlab('Author Shell') +
+  ylab('Retweeted Author Shell') +
+  theme_bw() + 
+  guides(fill=guide_legend(title="Proportion of Retweets"))
 
+retweets_hm
 
-
-
-
-
-
-
-
-
-
-
-
+ggsave('plots/K-core/retweets_hm.png', retweets_hm, width = 5, height = 5)
+```
 
