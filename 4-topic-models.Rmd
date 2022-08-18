@@ -5,17 +5,18 @@ date: "2022-08-04"
 output: html_document
 ---
 
-Purpose : 
+Purpose :
 
-1. Create a separate dfm of tweets 
+1. Create a separate dfm of tweets
 2. Find optimal topic no.
-3. 
+3. Match topics between the groups
 
-Create workspace : 
+Create workspace :
 
 ```{r, message=F}
 rm(list= ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
 library(quanteda)
 library(stm)
 library(topicmodels)
@@ -27,24 +28,10 @@ library(ggplot2)
 library(tidyr)
 library(tidytext)
 library(ggthemes)
-library(furrr)
-library(purrr)
 library(ldatuning)
 library(topicdoc)
-#plan(multicore)
 ```
 
-Load in the data 
-
-```{r}
-network_tweets <- readRDS('tweets/network_tweets.rds')
-coredfm <- readRDS('dfm/coredfm.rds')
-peripherydfm <- readRDS('dfm/peripherydfm.rds')
-
-K_core_results <- readRDS('topic models/K_core_results.rds')
-K_periphery_results <- readRDS('topic models/K_periphery_results.rds')
-
-```
 
 Preprocessing :
 
@@ -52,17 +39,17 @@ Preprocessing :
 # Get all retweets and only keep the distinct ones whose authors are assigned to a core
 
 retweets <- network_tweets |>
-  filter(!is.na(retweeted_text) & !is.na(cores)) |> 
+  filter(!is.na(retweeted_text) & !is.na(cores)) |>
   distinct(referenced_tweets_id.y, .keep_all = T)
 
 # Non retweets
 
-unique_tweets <- network_tweets |> 
+unique_tweets <- network_tweets |>
   filter(referenced_tweets_type != 'retweeted')
 
 corpus <- bind_rows(original_tweets, retweets) # bind them together
 
-# remove all hashtags 
+# remove all hashtags
 
 hashtags <- stringr::str_extract_all(corpus$text.x, "#\\w+")
 hashtags <- unlist(hashtags)
@@ -75,27 +62,27 @@ hashtags_to_remove
 ```{r}
 keywords <- c('farmers', 'protest')
 
-make_dfm <- function(tweets = corpus, 
+make_dfm <- function(tweets = corpus,
                      core = 1){
-  
-  dfm <- tweets |> 
-    filter(!is.na(cores) & 
-             referenced_tweets_type != 'retweeted' & 
-             is_core == core) |> 
-    corpus(text = 'text.x') |> 
-    tokens(remove_punct = TRUE, 
-           remove_symbols = TRUE, 
-           remove_numbers = TRUE, 
-           remove_url = TRUE) |> 
-    tokens_remove(c(stopwords('en'), 
-                    hashtags_to_remove, 
-                    keywords)) |> 
+
+  dfm <- tweets |>
+    filter(!is.na(cores) &
+             referenced_tweets_type != 'retweeted' &
+             is_core == core) |>
+    corpus(text = 'text.x') |>
+    tokens(remove_punct = TRUE,
+           remove_symbols = TRUE,
+           remove_numbers = TRUE,
+           remove_url = TRUE) |>
+    tokens_remove(c(stopwords('en'),
+                    hashtags_to_remove,
+                    keywords)) |>
     tokens_ngrams(1:2) |>
     dfm() |>
     dfm_group(groups = created_at) |>
-    dfm_trim(min_termfreq = 20, 
+    dfm_trim(min_termfreq = 20,
              max_termfreq = 1000)
-  
+
   return(dfm)
 }
 
@@ -109,7 +96,7 @@ coredfm
 peripherydfm
 ```
 
-Evaluate and chose : 
+Evaluate and chose :
 
 ```{r}
 options(scipen = 99)
@@ -123,28 +110,28 @@ K = c(30, 40, 50, 60, 70, 80, 90, 100)
 # Log likelihood and exclusivity metric
 
 metrics <- lapply(1:length(K), function(x){
-  
+
   K = K[x]
   print(K)
-  
-  tm_core <- LDA(core_input, 
-            K, 
-            method="Gibbs", 
+
+  tm_core <- LDA(core_input,
+            K,
+            method="Gibbs",
             control=list(iter = 50, seed = 21))
-  
-  tm_periphery <- LDA(periphery_input, 
-                 K, 
-                 method="Gibbs", 
+
+  tm_periphery <- LDA(periphery_input,
+                 K,
+                 method="Gibbs",
                  control=list(iter = 50, seed = 11))
-  
-  
+
+
   log_likelihood_core <- as.numeric(logLik(tm_core))
   log_likelihood_periphery <- as.numeric(logLik(tm_periphery))
-  
+
   exclusivity_core <- mean(topic_exclusivity(tm_core))
   exclusivity_periphery <- mean(topic_exclusivity(tm_periphery))
-  
-  return(list(log_likelihood_core, log_likelihood_periphery, 
+
+  return(list(log_likelihood_core, log_likelihood_periphery,
               exclusivity_core, exclusivity_periphery))
 })
 
@@ -157,100 +144,100 @@ saveRDS(metrics, 'topic models/evaluation_results.rds')
 
 ```
 
-Show metrics : 
+Show metrics :
 
 ```{r}
 metrics <- readRDS('topic models/evaluation_results.rds')
 
-ptm_chose <- metrics |> 
-  pivot_longer(cols = -K, 
+ptm_chose <- metrics |>
+  pivot_longer(cols = -K,
                names_to = c('metric', '.values'),
                names_sep = '_') |>
   filter(.values == 'Periphery') |>
-  ggplot() + 
-  geom_line(aes(x = K, y = value), 
-            color = '#46A6C3') + 
-  geom_point(aes(x = K, y = value), 
+  ggplot() +
+  geom_line(aes(x = K, y = value),
             color = '#46A6C3') +
-  facet_wrap(~metric, 
-             scales = 'free') + 
-  theme_bw() + 
+  geom_point(aes(x = K, y = value),
+            color = '#46A6C3') +
+  facet_wrap(~metric,
+             scales = 'free') +
+  theme_bw() +
   labs(title = 'Evaluation metrics : Periphery')
 
-ctm_chose <- metrics |> 
-  pivot_longer(cols = -K, 
+ctm_chose <- metrics |>
+  pivot_longer(cols = -K,
                names_to = c('metric', '.values'),
                names_sep = '_') |>
   filter(.values == 'Core') |>
-  ggplot() + 
-  geom_line(aes(x = K, y = value), 
-            color = '#1E4E5C') + 
-  geom_point(aes(x = K, y = value), 
+  ggplot() +
+  geom_line(aes(x = K, y = value),
             color = '#1E4E5C') +
-  facet_wrap(~metric, 
-             scales = 'free') + 
-  theme_bw() + 
+  geom_point(aes(x = K, y = value),
+            color = '#1E4E5C') +
+  facet_wrap(~metric,
+             scales = 'free') +
+  theme_bw() +
   labs(title = 'Evaluation metrics : Core')
 
 ptm_chose
 ctm_chose
 
-ggsave('plots/topic models/chose_core.png', 
-       ctm_chose, 
+ggsave('plots/topic models/chose_core.png',
+       ctm_chose,
        width = 10,
        height = 3)
 
-ggsave('plots/topic models/chose_periphery.png', 
-       ptm_chose, 
-       width = 10, 
+ggsave('plots/topic models/chose_periphery.png',
+       ptm_chose,
+       width = 10,
        height = 3)
 
 ```
 
 
 ```{r}
-ctm <- LDA(core_input, 
-           100, 
-           method="Gibbs", 
+ctm <- LDA(core_input,
+           100,
+           method="Gibbs",
            control=list(iter = 500, seed = 1))
 
-ptm <- LDA(periphery_input, 
-           100, 
-           method="Gibbs", 
+ptm <- LDA(periphery_input,
+           100,
+           method="Gibbs",
            control=list(iter = 500, seed = 11))
 
 ```
 
 
-Analyze top terms for each topic : 
+Analyze top terms for each topic :
 
 ```{r}
 core_terms <- data.frame(t(data.frame(terms(ctm, 20))))
 periphery_terms <- data.frame(t(data.frame(terms(ptm, 20))))
 
 
-core_labels <- data.frame(topics = 1:100, 
+core_labels <- data.frame(topics = 1:100,
            terms = do.call(paste, c(core_terms, sep=", ")))
 
 
-periphery_labels <- data.frame(topics = 1:100, 
+periphery_labels <- data.frame(topics = 1:100,
            terms = do.call(paste, c(periphery_terms, sep=", ")))
 
 
-write.csv(core_labels, 'topic models/core_labels.csv', 
+write.csv(core_labels, 'topic models/core_labels.csv',
           row.names = F)
 
-write.csv(periphery_labels, 'topic models/periphery_labels.csv', 
+write.csv(periphery_labels, 'topic models/periphery_labels.csv',
           row.names = F)
 ```
 
-Beta/Gamma values : 
+Gamma values : 
 
 ```{r}
-gamma_core <- tidy(ctm, 
+gamma_core <- tidy(ctm,
                    matrix = 'gamma')
 
-gamma_periphery <- tidy(ptm, 
+gamma_periphery <- tidy(ptm,
                    matrix = 'gamma')
 
 
@@ -259,28 +246,28 @@ saveRDS(gamma_core, 'topic models/gamma_periphery.rds')
 
 ```
 
-Matching Topics : 
+Matching Topics :
 
 ```{r}
-select_topic <- function(topic_core, 
-                          topic_periphery, 
-                          topic_name, 
+select_topic <- function(topic_core,
+                          topic_periphery,
+                          topic_name,
                           save = NULL){
   core <- gamma_core |>
-    filter(topic == topic_core) |> 
-    mutate(name = topic_name) |> 
+    filter(topic == topic_core) |>
+    mutate(name = topic_name) |>
     select(document, name, gamma)
-  
+
   periphery <- gamma_periphery |>
-    filter(topic == topic_periphery) |> 
-    mutate(name = topic_name) |> 
+    filter(topic == topic_periphery) |>
+    mutate(name = topic_name) |>
     select(document, name, gamma)
-  
-  topic <- core |> 
-    full_join(periphery, by = 'document') |> 
+
+  topic <- core |>
+    full_join(periphery, by = 'document') |>
     select(document, gamma_core = gamma.x, gamma_periphery = gamma.y, name = name.x)
-  
-  
+
+
   if(save == T){
     write.csv(topic, paste0('topics/', topic_name, '.csv'))
     return(topic)
@@ -290,47 +277,40 @@ select_topic <- function(topic_core,
 }
 
 
-suppress <- select_topic(topic_core = 44, 
-                       topic_periphery = 34, 
-                       topic_name = 'suppress', 
+suppress <- select_topic(topic_core = 44,
+                       topic_periphery = 34,
+                       topic_name = 'suppress',
                        save = T)
 
 
-singhu <- select_topic(topic_core = 45, 
-                       topic_periphery = 18, 
-                       topic_name = 'singhu', 
+singhu <- select_topic(topic_core = 45,
+                       topic_periphery = 18,
+                       topic_name = 'singhu',
                        save = T)
 
-rihanna <- select_topic(topic_core = 58, 
-                       topic_periphery = 25, 
-                       topic_name = 'rihanna', 
+rihanna <- select_topic(topic_core = 58,
+                       topic_periphery = 25,
+                       topic_name = 'rihanna',
                        save = T)
 
-republic_day <- select_topic(topic_core = 68, 
-                       topic_periphery = 91, 
-                       topic_name = 'republic day', 
+republic_day <- select_topic(topic_core = 68,
+                       topic_periphery = 91,
+                       topic_name = 'republic day',
                        save = T)
 
-crony <- select_topic(topic_core = 71, 
-                       topic_periphery = 31, 
-                       topic_name = 'crony capitalism', 
+crony <- select_topic(topic_core = 71,
+                       topic_periphery = 31,
+                       topic_name = 'crony capitalism',
                        save = T)
 
-media <- select_topic(topic_core = 81, 
-                       topic_periphery = 21, 
-                       topic_name = 'media hypocracy', 
+media <- select_topic(topic_core = 81,
+                       topic_periphery = 21,
+                       topic_name = 'media hypocracy',
                        save = T)
 
-covid <- select_topic(topic_core = 96, 
-                       topic_periphery = 77, 
-                       topic_name = 'covid', 
+covid <- select_topic(topic_core = 96,
+                       topic_periphery = 77,
+                       topic_name = 'covid',
                        save = T)
 
 ```
-
-
-
-
-
-
-

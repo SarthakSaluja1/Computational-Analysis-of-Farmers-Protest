@@ -4,20 +4,20 @@ author: "Sarthak Saluja"
 output: html_document
 ---
 
-Purpose : 
+Purpose :
 
 1. Find out the coreness of the graph
 2. Explore structure of graph
-3. Create a network between the cores and periphery 
+3. Create a network between the cores and periphery
 
 Initialize workspace :
 
 ```{r}
-setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) 
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 rm(list = ls())
 ```
 
-Load in libraries : 
+Load in libraries :
 
 ```{r, message = F}
 library(igraph)
@@ -28,55 +28,47 @@ library(tidyr)
 library(hrbrthemes)
 ```
 
-Load in data : 
+
+
+1. Coreness of the graph
+
+Generate a random graph to display :
 
 ```{r}
-retweet_network <- readRDS('networks/retweet_network.rds')
-network_tweets <- readRDS('tweets/network_tweets.rds')
-edges_core <- readRDS('edge_lists/edges_core.rds')
-core_network <- readRDS('networks/core_network.rds')
-
-```
-
-1. Coreness of the graph 
-
-Generate a random graph to display : 
-
-```{r}
-ran <- sample_gnp(n = 15, 
+ran <- sample_gnp(n = 15,
                   p = 0.2) # Random Graph with 5 nodes and 12 edges
 
 random_shells <- coreness(ran)
 V(ran)$shell <- random_shells
-V(ran)$color <- ifelse(V(ran)$shell == 0, 'red', 
+V(ran)$color <- ifelse(V(ran)$shell == 0, 'red',
                        ifelse(V(ran)$shell == 1, 'blue', 'green'))
 
-# Plot 
+# Plot
 
-plot(ran, 
-     vertex.label = NA, 
+plot(ran,
+     vertex.label = NA,
      main = 'K-shells for a random graph')
 
-legend('topright', 
+legend('topright',
        legend = c(0, 1, 2),
        bty = 'n',
        col = c('red', 'blue', 'green'),
-       pch = 20, 
+       pch = 20,
        title = 'shell')
 ```
 
-Find out the cores in retweet network : 
+Find out the cores in retweet network :
 
 ```{r}
 
 extract_cores <- function(network){
-  
+
   cores <- coreness(network)
   core_df <- data.frame(cores)
   core_df$author_id <- rownames(core_df)
   core_df <- core_df[c(2,1)]
   rownames(core_df) <- NULL
-  
+
   return(core_df)
 }
 
@@ -84,47 +76,47 @@ edges_core <- extract_cores(retweet_network)
 ```
 
 
-Number of users per core : 
+Number of users per core :
 
 ```{r}
 num_users <- data.frame(table(edges_core$cores))
 
 colnames(num_users) <- c('core', 'users')
 
-color_gradient <- c('#72C0B4', '#64B9AD', '#56B3A7', '#4CA99D', '#469B8F', 
-                    '#3F8D82', '#397F75', '#337167', '#2C6359', '#26544C', 
+color_gradient <- c('#72C0B4', '#64B9AD', '#56B3A7', '#4CA99D', '#469B8F',
+                    '#3F8D82', '#397F75', '#337167', '#2C6359', '#26544C',
                     '#204640', '#1A3833', '#132A26')
 
-users_per_core <- ggplot(num_users, 
-                         aes(x = factor(core), 
-                             y = users)) + 
-  geom_bar(aes(fill = as.factor(core)), 
-           stat = 'identity', 
-           width = 0.5) + 
+users_per_core <- ggplot(num_users,
+                         aes(x = factor(core),
+                             y = users)) +
+  geom_bar(aes(fill = as.factor(core)),
+           stat = 'identity',
+           width = 0.5) +
   scale_fill_manual(values = color_gradient) +
-  xlab('Shell') + 
-  ylab('Number of users') + 
-  theme_bw() + 
+  xlab('Shell') +
+  ylab('Number of users') +
+  theme_bw() +
   theme(legend.position = 'None')
 
 users_per_core
 
-ggsave(filename = 'plots/K-core/users_by_core.png', 
-       users_per_core, 
+ggsave(filename = 'plots/K-core/users_by_core.png',
+       users_per_core,
        height = 7, width = 10)
 ```
 
-Merge with the edge df and create an edge list : 
+Merge with the edge df and create an edge list :
 
 
 ```{r}
 
-edges_core <- edges_retweets |> 
-  left_join(edges_core, by = c('author_id' = 'author_id')) |> 
-  select(author_id, retweet_author_id, count, author_core = cores) |> 
-  left_join(edges_core, by = c('retweet_author_id' = 'author_id')) |> 
-  select(author_id, retweet_author_id, count, author_core, retweet_author_core = cores) |> 
-  group_by(author_core, retweet_author_core) |> 
+edges_core <- edges_retweets |>
+  left_join(edges_core, by = c('author_id' = 'author_id')) |>
+  select(author_id, retweet_author_id, count, author_core = cores) |>
+  left_join(edges_core, by = c('retweet_author_id' = 'author_id')) |>
+  select(author_id, retweet_author_id, count, author_core, retweet_author_core = cores) |>
+  group_by(author_core, retweet_author_core) |>
   summarize(messages = sum(count))
 
 edges_core
@@ -132,76 +124,76 @@ edges_core
 saveRDS(edges_core, 'edge_lists/edges_core.rds')
 ```
 
-2. Explore the groups : 
+2. Explore the groups :
 
-Which group receives the most re-tweets? 
+Which group receives the most re-tweets?
 
 ```{r}
-retweets_by_core <- edges_core |> 
-  group_by(retweet_author_core) |> 
-  summarise(retweets_received = sum(messages)) |> 
-  arrange(-retweets_received) |> 
-  ggplot(aes(x = factor(retweet_author_core), y = retweets_received)) + 
-  geom_bar(stat = 'identity', 
-           width = 0.01, 
-           color = 'black') + 
-  coord_flip() + 
-  xlab('Core') + 
-  ylab('Retweets Received') + 
+retweets_by_core <- edges_core |>
+  group_by(retweet_author_core) |>
+  summarise(retweets_received = sum(messages)) |>
+  arrange(-retweets_received) |>
+  ggplot(aes(x = factor(retweet_author_core), y = retweets_received)) +
+  geom_bar(stat = 'identity',
+           width = 0.01,
+           color = 'black') +
+  coord_flip() +
+  xlab('Core') +
+  ylab('Retweets Received') +
   theme_bw()
 
 retweets_by_core
 
-ggsave(filename = 'plots/K-core/retweets_by_core.png', 
-       retweets_by_core, 
-       height = 5, 
+ggsave(filename = 'plots/K-core/retweets_by_core.png',
+       retweets_by_core,
+       height = 5,
        width = 2.5)
 ```
 
-Get core values in original tweets df : 
+Get core values in original tweets df :
 
 ```{r}
-network_tweets <- all_tweets |> 
+network_tweets <- all_tweets |>
   left_join(core_df, by = 'author_id')
 ```
 
-Number of messages per core : 
+Number of messages per core :
 
 ```{r}
 core_stats <- network_tweets |>
   filter(!is.na(cores)) |>
   group_by(cores) |>
-  summarise(total_messages = n(), 
-            num_users = n_distinct(author_id)) |> 
-  mutate(avg_messages = total_messages/num_users) 
+  summarise(total_messages = n(),
+            num_users = n_distinct(author_id)) |>
+  mutate(avg_messages = total_messages/num_users)
 
 write.csv(core_stats, 'core_stats.csv')
 
-contributions <- core_stats |> 
-  mutate(sum_total_messages = sum(total_messages), 
-         sum_mean_messages = sum(avg_messages)) |> 
-  mutate(contribution = (total_messages/sum_total_messages) * 100, 
-         mean_contribution = (avg_messages/sum_mean_messages) * 100) |> 
-  select(cores, contribution, mean_contribution) |> 
-  pivot_longer(cols = !cores, 
+contributions <- core_stats |>
+  mutate(sum_total_messages = sum(total_messages),
+         sum_mean_messages = sum(avg_messages)) |>
+  mutate(contribution = (total_messages/sum_total_messages) * 100,
+         mean_contribution = (avg_messages/sum_mean_messages) * 100) |>
+  select(cores, contribution, mean_contribution) |>
+  pivot_longer(cols = !cores,
                names_to = 'metric')
 
-contributions_plot <- contributions |> 
-  ggplot() + 
-  geom_bar(aes(x = factor(cores), y = value, 
-               fill = metric, color = metric), 
-           stat = 'identity', 
-           width = 0.5) + 
+contributions_plot <- contributions |>
+  ggplot() +
+  geom_bar(aes(x = factor(cores), y = value,
+               fill = metric, color = metric),
+           stat = 'identity',
+           width = 0.5) +
   coord_flip() +
-  scale_color_manual(labels = c('normalized contribution', 
-                                'normalized per user contribution'), 
+  scale_color_manual(labels = c('normalized contribution',
+                                'normalized per user contribution'),
                      values = c('#3B7D7A', '#2C4E4D')) +
-  scale_fill_manual(labels = c('normalized contribution', 
-                                'normalized per user contribution'), 
+  scale_fill_manual(labels = c('normalized contribution',
+                                'normalized per user contribution'),
                     values = c('#3B7D7A', '#2C4E4D')) +
-  theme_bw() + 
-  xlab('shell') + 
-  ylab('contribution') 
+  theme_bw() +
+  xlab('shell') +
+  ylab('contribution')
 
 contributions_plot
 
@@ -210,67 +202,64 @@ ggsave('plots/K-core/contributions_plot.png', contributions_plot)
 
 ```{r}
 
-users_by_core <- ggplot(core_stats, 
-       aes(x = factor(cores), y = num_users)) + 
-  geom_bar(stat = 'identity', 
-           width = 0.5, 
-           color = 'black') + 
-  coord_flip() + 
-  xlab('Core') + 
-  ylab('Number of users') + 
+users_by_core <- ggplot(core_stats,
+       aes(x = factor(cores), y = num_users)) +
+  geom_bar(stat = 'identity',
+           width = 0.5,
+           color = 'black') +
+  coord_flip() +
+  xlab('Core') +
+  ylab('Number of users') +
   theme_bw()
 
-total_tweets_by_core
-avg_tweets_by_core
+
 users_by_core
 
-ggsave(filename = 'plots/K-core/total_tweets_by_core.png', total_tweets_by_core)
-ggsave(filename = 'plots/K-core/avg_tweets_by_core.png', avg_tweets_by_core)
 ggsave(filename = 'plots/K-core/users_by_core.png', users_by_core)
 ```
 
-Number of users vs Number of messages 
+Number of users vs Number of messages
 
-Boxplot of number of messages : 
+Boxplot of number of messages :
 
 ```{r}
-color_gradient <- c('#72C0B4', '#64B9AD', '#56B3A7', '#4CA99D', '#469B8F', 
-                    '#3F8D82', '#397F75', '#337167', '#2C6359', '#26544C', 
+color_gradient <- c('#72C0B4', '#64B9AD', '#56B3A7', '#4CA99D', '#469B8F',
+                    '#3F8D82', '#397F75', '#337167', '#2C6359', '#26544C',
                     '#204640', '#1A3833', '#132A26')
 
-boxplot <- network_tweets |> 
-  filter(!is.na(cores)) |> 
-  group_by(cores, author_id) |> 
-  summarize(messages_per_author = n()) |> 
-  ggplot(aes(x = factor(cores), 
-             y = messages_per_author)) + 
+boxplot <- network_tweets |>
+  filter(!is.na(cores)) |>
+  group_by(cores, author_id) |>
+  summarize(messages_per_author = n()) |>
+  ggplot(aes(x = factor(cores),
+             y = messages_per_author)) +
   geom_boxplot(aes(fill = factor(cores)),
-               outlier.shape = NA) + 
+               outlier.shape = NA) +
   scale_fill_manual(values = color_gradient) +
   stat_summary(fun=mean, geom="line", aes(group=1, color = 'red')) +
   scale_y_continuous(limits = c(0, 1200)) +
-  theme_bw() + 
+  theme_bw() +
   theme(legend.position = 'none') +
-  xlab('shell') + 
+  xlab('shell') +
   ylab('Messages posted')
 
 data = ggplot_build(boxplot)$data[[1]]
 
-boxplot <- boxplot + 
-  geom_segment(data=data, 
-               aes(x=xmin, xend=xmax, y=middle, yend=middle), 
+boxplot <- boxplot +
+  geom_segment(data=data,
+               aes(x=xmin, xend=xmax, y=middle, yend=middle),
                colour="white")
 
 ggsave('plots/K-core/boxplot.png', boxplot)
-  
+
 
 ```
 
 
 
-3. Core-periphery Network 
+3. Core-periphery Network
 
-Create Network 
+Create Network
 
 ```{r}
 core_network <- graph_from_data_frame(edges_core[, 1:2], directed = T)
@@ -278,25 +267,21 @@ E(core_network)$weight <- edges_core$messages
 V(core_network)$messages <- num_messages$total_messages
 summary(core_network)
 
-saveRDS(core_network, 'networks/core_network.rds')
 ```
 
-Plot Network 
+Plot Network
 
 ```{r}
-# Remove self loops 
 
-simplify_core_network <- simplify(core_network)
+# Set color if edge connects to core number 13
 
-# Set color if edge connects to core number 13 
-
-E(core_network)[V(core_network)[V(core_network) == 13] %--% 
+E(core_network)[V(core_network)[V(core_network) == 13] %--%
                   V(core_network)[V(core_network) != 13]][1:12]$color <- '#397F75'
-E(core_network)[V(core_network)[V(core_network) == 13] %--% 
+E(core_network)[V(core_network)[V(core_network) == 13] %--%
                   V(core_network)[V(core_network) == 13]]$color <- '#397F75'
-E(core_network)[V(core_network)[V(core_network) == 13] %--% 
+E(core_network)[V(core_network)[V(core_network) == 13] %--%
                   V(core_network)[V(core_network) != 13]][12:24]$color <- '#55B4A9'
-E(core_network)[V(core_network)[V(core_network) != 13] %--% 
+E(core_network)[V(core_network)[V(core_network) != 13] %--%
                   V(core_network)[V(core_network) != 13]]$color <- '#55B4A9'
 
 # Create gradient
@@ -315,70 +300,64 @@ V(core_network)[11]$color = '#1E4E5C'
 V(core_network)[12]$color = '#19414D'
 V(core_network)[13]$color = '#14343E'
 
-# Plot 
+# Plot
 
 png('plots/K-core/decomposition.png', 600, 600)
 
-plot(core_network, 
-     vertex.size = unlist(V(core_network)$messages)*0.0003, 
-     edge.width = E(core_network)$weight*0.001, 
+plot(core_network,
+     vertex.size = unlist(V(core_network)$messages)*0.0003,
+     edge.width = E(core_network)$weight*0.001,
      vertex.color = V(core_network)$color,
      edge.arrow.size = E(core_network)$weight*0.0001,
      edge.curved = 0.25,
      vertex.label.color = 'white',
      vertex.frame.color = 'white',
      vertex.label.cex = 0.6,
-     layout = layout.circle, 
+     layout = layout.circle,
      main = 'K-core decomposition of retweet network'
      )
 
 dev.off()
 
-
-# layout = layout_as_spiral(simplify_core_network, 
-#                                type = 'Bernoulli', 
-#                                rev = T, 
-#                                a = 5)
 ```
 
 
-Assign core and periphery : 
+Assign core and periphery :
 
 ```{r}
 tweets_core$is_core <- ifelse(tweets_core$cores > 7, 1, 0)
 
-num_messages |> 
-  mutate(core = ifelse(cores > 7, 1, 0)) |> 
-  group_by(core) |> 
-  summarize(n = sum(total_messages)) # 0	482632			1	330451	
+num_messages |>
+  mutate(core = ifelse(cores > 7, 1, 0)) |>
+  group_by(core) |>
+  summarize(n = sum(total_messages)) # 0	482632			1	330451
 
 
 saveRDS(tweets_core, 'tweets/network_tweets.rds')
 ```
 
-Heatmap of retweets between shells : 
+Heatmap of retweets between shells :
 
 ```{r}
 retweets_hm <- edges_core |>
   ungroup() |>
   mutate(retweet_prop = messages/sum(messages)) |>
-  ggplot() + 
-  geom_tile(aes(x = author_core, 
-                 y = retweet_author_core, 
-                 fill = retweet_prop)) + 
-  scale_fill_gradient(low = '#397F75', 
+  ggplot() +
+  geom_tile(aes(x = author_core,
+                 y = retweet_author_core,
+                 fill = retweet_prop)) +
+  scale_fill_gradient(low = '#397F75',
                       high = 'black') +
-  scale_y_continuous(expand = c(0,0), 
+  scale_y_continuous(expand = c(0,0),
                      breaks = 1:13) +
-  scale_x_continuous(expand = c(0,0), 
+  scale_x_continuous(expand = c(0,0),
                      breaks = 1:13) +
   xlab('Author Shell') +
   ylab('Retweeted Author Shell') +
-  theme_bw() + 
+  theme_bw() +
   guides(fill=guide_legend(title="Proportion of Retweets"))
 
 retweets_hm
 
 ggsave('plots/K-core/retweets_hm.png', retweets_hm, width = 5, height = 5)
 ```
-
