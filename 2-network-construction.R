@@ -16,7 +16,7 @@ library(ggplot2)
 
 ## Load in the data ## 
 
-all_tweets <- readRDS('tweets/all_tweets.rds')
+# all_tweets <- readRDS('tweets/all_tweets.rds')
 
 ## 1. Create a re-tweet network between all members of the tweet corpus ## 
 
@@ -28,11 +28,12 @@ edges_retweets <- all_tweets %>%
   group_by(author_id, retweet_author_id) %>% 
   summarise(count = n())
 
+# Create retweet network
+
 retweet_network <- graph_from_data_frame(edges_retweets[, c(1,2)], directed = T)
-E(retweet_network)$weight <- edge_df$count
+E(retweet_network)$weight <- edges_retweets$count
 summary(retweet_network)
 
-saveRDS(retweet_network, 'networks/retweet_network.rds')
 saveRDS(edges_retweets, 'edge_lists/edges_retweets.rds')
 
 ## 2. Basic Characteristics of network 
@@ -78,6 +79,8 @@ write.csv(network_stats, 'csv/network_stats.csv')
 
 # Degree distribution 
 
+color = ('Mean line' = 'red')
+
 agg_retweets_received <- edges_retweets |> 
   group_by(retweet_author_id) |> 
   summarize(sum = sum(count)) |> 
@@ -86,16 +89,22 @@ agg_retweets_received <- edges_retweets |>
   mutate(log_sum = log(sum)) |>
   ggplot() + 
   geom_density(aes(log_sum), 
-               adjust = 0.5) + 
+               adjust = 0.5, 
+               color = '#469B8F') + 
+  geom_vline(aes(xintercept = log(mean(sum)), 
+             color = 'Mean line'), 
+             linetype = 'dashed') +
   xlab('Log of Aggregated retweets received') + 
-  theme_bw()
+  scale_color_manual(values = color) +
+  theme_bw() + 
+  theme(legend.title = element_blank())
 
 agg_retweets_received
 
 ggsave('plots/Retweet Network/agg_retweets_received.png', 
        agg_retweets_received, 
-       width = 5, 
-       height = 5)
+       width = 4, 
+       height = 4)
 
 
 
